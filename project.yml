@@ -1,0 +1,80 @@
+name: MayaIOS
+options:
+  minimumXcodeGenVersion: 2.38.0
+configs:
+  Debug: debug
+  Release: release
+settings:
+  base:
+    PRODUCT_BUNDLE_IDENTIFIER: tech.taliferro.mayaios
+    IPHONEOS_DEPLOYMENT_TARGET: 17.0
+    SWIFT_VERSION: 5.0
+packages:
+  FirebaseiOS:
+    url: https://github.com/firebase/firebase-ios-sdk
+    from: 10.29.0
+  TODDAuthKit:
+    path: ../TODDAuthKit
+  TODDEntitlementKit:
+    path: ../TODDEntitlementKit
+targets:
+  MayaIOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: MayaIOS
+    settings:
+      base:
+        PRODUCT_NAME: MayaIOS
+        MAYA_API_BASE_URL: https://api.taliferro.tech/api
+        # The static bearer key /marketing-director/advice checks
+        # server-side (process.env.TALIFERRO_TECH in openaiRoutes.js) -
+        # not a real secret, it's the same public Firebase Web API key
+        # already embedded in frontend/src/environments/environment*.ts
+        # and sent by every anonymous web visitor. Was left empty here,
+        # which made every chat request 401 with an empty bearer token.
+        MAYA_API_KEY: AIzaSyCAAgRd8tq9PXkPKE2zddseYtZ-Xx_P8mU
+        # AppIcon.appiconset added 2026-09-21 - see MayaIOS/Resources/
+        # Assets.xcassets/AppIcon.appiconset/Contents.json.
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Set once Maya's subscription product exists in App Store Connect
+        # (see docs/app-store-exclusive-billing-plan.md) - empty is expected
+        # until then; EntitlementService treats it as "not configured yet".
+        MAYA_APP_STORE_PRODUCT_ID: ""
+    info:
+      path: Generated/Info.plist
+      properties:
+        CFBundleDisplayName: Maya
+        LSRequiresIPhoneOS: true
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: true
+        MAYA_API_BASE_URL: $(MAYA_API_BASE_URL)
+        MAYA_API_KEY: $(MAYA_API_KEY)
+        MAYA_APP_STORE_PRODUCT_ID: $(MAYA_APP_STORE_PRODUCT_ID)
+        # Native Google Sign-In's redirect callback scheme - the
+        # REVERSED_CLIENT_ID from GoogleService-Info.plist, caught by
+        # GoogleSignInHelper.handle(url) via .onOpenURL in MayaIOSApp.swift.
+        # Mirrors network-ios/pulse-ios/docs-ios/moves-ios.
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - com.googleusercontent.apps.633736143723-4cjk57c6rmff82qlm13rgh6h0sme2ia3
+    entitlements:
+      path: Generated/MayaIOS.entitlements
+      properties:
+        com.apple.developer.applesignin:
+          - Default
+    dependencies:
+      - package: FirebaseiOS
+        product: FirebaseAuth
+      - package: FirebaseiOS
+        product: FirebaseFirestore
+      - package: TODDAuthKit
+      - package: TODDEntitlementKit
+    scheme:
+      testTargets: []

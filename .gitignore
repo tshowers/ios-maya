@@ -1,0 +1,21 @@
+# XcodeGen-generated — regenerate with `xcodegen generate`, don't commit
+*.xcodeproj/
+Generated/
+
+# Xcode
+DerivedData/
+*.xcuserstate
+xcuserdata/
+.build/
+
+# Firebase — per-developer/per-registration, not checked in
+GoogleService-Info.plist
+
+# Local signing config
+ExportOptions-AdHoc.plist
+
+# Build artifacts
+*.ipa
+
+# macOS
+.DS_Store
