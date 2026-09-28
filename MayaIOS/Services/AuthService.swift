@@ -2,6 +2,7 @@ import Foundation
 import FirebaseAuth
 import FirebaseFirestore
 import TODDAuthKit
+import TODDProfileKit
 
 /// Mirrors `frontend/src/app/services/auth.service.ts`. Unlike `pulse-ios`
 /// (where `tenantId` is just the Firebase UID), Maya needs the same
@@ -31,6 +32,10 @@ final class AuthService: ObservableObject {
             self.isLoading = false
             self.sessionGate.handleAuthStateChange(hasUser: user != nil)
             Task { await self.refreshTenantId() }
+            // Retries a wizard profile save that failed on a previous launch.
+            if user != nil {
+                Task { await self.submitOnboardingProfileIfNeeded() }
+            }
         }
     }
 
@@ -57,6 +62,52 @@ final class AuthService: ObservableObject {
         return try await user.getIDToken()
     }
 
+    /// Calls the backend's get-or-create tenant/contact endpoint
+    /// (`POST /api/mobile/auth/bootstrap`, mobileAuthRoutes.js) right after a
+    /// fresh native sign-in - same as network-ios/docs-ios - so a brand-new
+    /// Maya user has a TODD workspace and profile record, then saves the
+    /// wizard's answers into it.
+    func bootstrapTenant() async throws {
+        let idToken = try await freshIdToken()
+        var request = URLRequest(url: AppConfig.fromBundle().apiBaseURL.appending(path: "mobile/auth/bootstrap"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("Bearer \(idToken)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw AuthServiceError.bootstrapFailed
+        }
+        tenantId = try JSONDecoder().decode(BootstrapResponse.self, from: data).tenantId
+        await submitOnboardingProfileIfNeeded()
+    }
+
+    /// Where the wizard keeps name/role/company/goals until sign-in.
+    static let profileStore = OnboardingProfileStore(storageKey: "maya.onboardingProfile", source: "maya-ios")
+
+    /// Saves the wizard's answers to the TODD profile (blank fields only,
+    /// best-effort; retried next launch if it fails).
+    func submitOnboardingProfileIfNeeded() async {
+        guard currentUser != nil else { return }
+        await Self.profileStore.submitIfReady(
+            baseURL: AppConfig.fromBundle().apiBaseURL,
+            idToken: { [weak self] in
+                guard let self else { throw AuthServiceError.notSignedIn }
+                return try await self.freshIdToken()
+            }
+        )
+    }
+
+    var profileAPI: ProfileAPI {
+        ProfileAPI(
+            baseURL: AppConfig.fromBundle().apiBaseURL,
+            idToken: { @MainActor [weak self] in
+                guard let self else { throw AuthServiceError.notSignedIn }
+                return try await self.freshIdToken()
+            }
+        )
+    }
+
     private func refreshTenantId() async {
         guard let uid = currentUser?.uid else {
             tenantId = nil
@@ -75,11 +126,18 @@ final class AuthService: ObservableObject {
 
 enum AuthServiceError: LocalizedError {
     case notSignedIn
+    case bootstrapFailed
 
     var errorDescription: String? {
         switch self {
         case .notSignedIn:
             return "Sign in to connect Maya to your TODD account."
+        case .bootstrapFailed:
+            return "Unable to set up your account. Please try again."
         }
     }
+}
+
+private struct BootstrapResponse: Decodable {
+    let tenantId: String
 }

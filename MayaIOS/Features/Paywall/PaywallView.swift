@@ -2,8 +2,8 @@ import SwiftUI
 import StoreKit
 import TODDEntitlementKit
 
-/// Shown as a sheet when a signed-in user taps the "subscribe to unlock
-/// personalization" banner in `ChatView`. Unlike the other apps' PaywallView,
+/// Pushed as a page (no popups) when a signed-in user taps the "subscribe
+/// to unlock personalization" banner in `ChatView`; Back returns to chat. Unlike the other apps' PaywallView,
 /// this is dismissible without signing out - Maya's chat keeps working as a
 /// guest either way, purchase only unlocks the personalized layer on top.
 struct PaywallView: View {
@@ -11,7 +11,6 @@ struct PaywallView: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        NavigationStack {
             VStack(spacing: 16) {
                 Spacer()
 
@@ -76,14 +75,10 @@ struct PaywallView: View {
                 Spacer()
             }
             .padding()
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Not now") { dismiss() }
-                }
-            }
+            .navigationTitle("Subscribe")
+            .navigationBarTitleDisplayMode(.inline)
             .task {
                 await entitlementService.loadProducts()
             }
-        }
     }
 }

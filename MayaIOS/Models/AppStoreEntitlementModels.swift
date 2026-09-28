@@ -1,5 +1,11 @@
 import Foundation
 
+/// Body for `POST /api/app-store/transactions/maya` - a StoreKit
+/// transaction's signed JWS, re-verified server-side.
+struct AppStoreTransactionRequest: Encodable {
+    let signedTransaction: String
+}
+
 struct AppStoreLinkRequest: Encodable {
     let appAccountToken: String
     let productKey: String

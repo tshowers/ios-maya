@@ -1,11 +1,13 @@
 import SwiftUI
 import FirebaseCore
 import TODDAuthKit
+import TODDAwardsKit
 
 @main
 struct MayaIOSApp: App {
     @StateObject private var authService = AuthService()
     @StateObject private var entitlementService: EntitlementService
+    @StateObject private var awardsService: AwardsService
     private let chatViewModel: ChatViewModel
 
     init() {
@@ -14,6 +16,7 @@ struct MayaIOSApp: App {
         let config = AppConfig.fromBundle()
         let authService = AuthService()
         _authService = StateObject(wrappedValue: authService)
+        _awardsService = StateObject(wrappedValue: MayaAwards.makeService(authService: authService))
         let entitlementService = EntitlementService(
             apiClient: MayaAppStoreClient(config: config, authService: authService),
             authService: authService,
@@ -31,7 +34,7 @@ struct MayaIOSApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(authService: authService, entitlementService: entitlementService, chatViewModel: chatViewModel)
+            RootView(authService: authService, entitlementService: entitlementService, awardsService: awardsService, chatViewModel: chatViewModel)
                 .onOpenURL { url in
                     _ = GoogleSignInHelper.handle(url)
                 }

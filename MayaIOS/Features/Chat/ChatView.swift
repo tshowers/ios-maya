@@ -1,5 +1,7 @@
 import SwiftUI
 import TODDAuthKit
+import TODDAwardsKit
+import TODDProfileKit
 
 /// Mirrors the "cockpit" redesign of `marketing-director-session.component.html`
 /// / `.css`: Maya logo + "Marketing advice" eyebrow, a rounded welcome
@@ -8,15 +10,26 @@ import TODDAuthKit
 /// started. Bottom tab navigation (Home/Talk/Status/Plan/More) and the
 /// all-apps grid are web-only for now — this app has no other screens for
 /// them to point at yet. Unlike `pulse-ios`, the whole screen is never gated
-/// behind sign-in — `SignInView` and `BiometricLockView` are sheets reachable
-/// from here, not something `RootView` swaps in for.
+/// behind sign-in. Sign-in (MayaOnboardingView), unlock, the paywall and the
+/// account pages are all pushed pages with a back button - no sheets.
 struct ChatView: View {
     @ObservedObject var viewModel: ChatViewModel
     @ObservedObject var authService: AuthService
     @ObservedObject var entitlementService: EntitlementService
-    @State private var showSignIn = false
-    @State private var showBiometricLock = false
-    @State private var showPaywall = false
+    @ObservedObject var awardsService: AwardsService
+    /// Observed directly (as the other TODD apps do): observing only
+    /// `authService` never redraws when Face ID succeeds.
+    @ObservedObject private var sessionGate: SessionUnlockGate
+    @State private var path: [MayaRoute] = []
+    @State private var isShowingLogoutConfirmation = false
+
+    init(viewModel: ChatViewModel, authService: AuthService, entitlementService: EntitlementService, awardsService: AwardsService) {
+        self.viewModel = viewModel
+        self.authService = authService
+        self.entitlementService = entitlementService
+        self.awardsService = awardsService
+        self.sessionGate = authService.sessionGate
+    }
 
     private static let chipPrompts = ["Sharpen my message", "Find my best audience", "Clarify my offer"]
 
@@ -30,7 +43,7 @@ struct ChatView: View {
 
     private var authDisplayState: AuthDisplayState {
         if authService.currentUser == nil { return .signedOut }
-        if !authService.sessionGate.isUnlocked { return .locked }
+        if !sessionGate.isUnlocked { return .locked }
         if entitlementService.isLoadingEntitlement { return .checkingEntitlement }
         if !entitlementService.isEntitled { return .notEntitled }
         return .unlocked
@@ -40,7 +53,125 @@ struct ChatView: View {
         viewModel.messages.contains { $0.role == .user }
     }
 
+    private var userMessageCount: Int {
+        viewModel.messages.filter { $0.role == .user }.count
+    }
+
     var body: some View {
+        NavigationStack(path: $path) {
+            chat
+                .toolbar {
+                    if authService.currentUser != nil {
+                        ToolbarItem(placement: .topBarTrailing) { accountMenu }
+                    }
+                }
+                .navigationBarTitleDisplayMode(.inline)
+                .navigationDestination(for: MayaRoute.self) { route in
+                    destination(route)
+                }
+        }
+        .tint(MayaTheme.accent)
+        .onChange(of: userMessageCount) { oldValue, newValue in
+            if newValue > oldValue { awardsService.recordQuestionAsked() }
+        }
+        .onChange(of: authDisplayState == .unlocked) { _, isUnlocked in
+            if isUnlocked { Task { await onUnlocked() } }
+        }
+        .onChange(of: path.isEmpty) { _, isEmpty in
+            // Back on the chat after a profile/checklist visit - the
+            // likeliest moment for new awards.
+            if isEmpty, authService.currentUser != nil { Task { await checkAwards() } }
+        }
+        .task {
+            if authDisplayState == .unlocked { await onUnlocked() }
+        }
+        .alert("Log out of Maya?", isPresented: $isShowingLogoutConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Log Out", role: .destructive) {
+                path = []
+                try? authService.signOut()
+            }
+        } message: {
+            Text("Maya keeps working signed out - without your business context.")
+        }
+    }
+
+    @ViewBuilder
+    private func destination(_ route: MayaRoute) -> some View {
+        switch route {
+        case .onboarding:
+            MayaOnboardingView(authService: authService) { path = [] }
+        case .unlock:
+            BiometricLockView(reason: "Unlock to restore your TODD session.") {
+                sessionGate.markUnlocked()
+                path = []
+            }
+        case .paywall:
+            PaywallView(entitlementService: entitlementService)
+        case .gettingStarted:
+            GettingStartedView(
+                api: MayaAccount.gettingStartedAPI(authService: authService),
+                appName: "Maya",
+                accent: MayaTheme.accent,
+                showAtStartupKey: MayaAccount.showAtStartupKey,
+                destination: { stepId in
+                    stepId == "profile" ? AnyView(MayaAccount.profileView(authService: authService)) : nil
+                },
+                onSelect: { _ in
+                    // Asking Maya (and the other apps' data) happen from the chat.
+                    path = []
+                }
+            ) {
+                MayaTheme.background
+            }
+        case .profile:
+            MayaAccount.profileView(authService: authService)
+        case .awards:
+            AwardsGridView(awardsService: awardsService)
+                .task { await awardsService.sync() }
+        }
+    }
+
+    private var accountMenu: some View {
+        Menu {
+            Button { path = [.gettingStarted] } label: { Label("Getting Started", systemImage: "checklist") }
+            Button { path = [.profile] } label: { Label("Profile", systemImage: "person.crop.circle") }
+            Button { path = [.awards] } label: { Label("Awards", systemImage: "rosette") }
+            Section {
+                Button(role: .destructive) {
+                    isShowingLogoutConfirmation = true
+                } label: {
+                    Label("Log Out", systemImage: "rectangle.portrait.and.arrow.right")
+                }
+            }
+        } label: {
+            Image(systemName: "person.crop.circle")
+                .font(.system(size: 20, weight: .semibold))
+                .foregroundStyle(MayaTheme.accent)
+        }
+        .accessibilityLabel("Account menu")
+    }
+
+    /// Signed in, unlocked and subscribed: check awards, and open the
+    /// checklist once per launch while steps remain (unless switched off).
+    private func onUnlocked() async {
+        await checkAwards()
+        guard path.isEmpty else { return }
+        if await GettingStartedStartup.shouldAutoShow(
+            api: MayaAccount.gettingStartedAPI(authService: authService),
+            showAtStartupKey: MayaAccount.showAtStartupKey
+        ), path.isEmpty {
+            path = [.gettingStarted]
+        }
+    }
+
+    private func checkAwards() async {
+        if let progress = await MayaAwards.loadProgress(authService: authService) {
+            awardsService.recordProgress(progress)
+        }
+    }
+
+    private var chat: some View {
         ZStack {
             MayaTheme.background.ignoresSafeArea()
 
@@ -72,25 +203,13 @@ struct ChatView: View {
                 }
             }
         }
-        .sheet(isPresented: $showSignIn) {
-            SignInView(onSignedIn: { showSignIn = false })
-        }
-        .sheet(isPresented: $showBiometricLock) {
-            BiometricLockView(reason: "Unlock to restore your TODD session.") {
-                authService.sessionGate.markUnlocked()
-                showBiometricLock = false
-            }
-        }
-        .sheet(isPresented: $showPaywall) {
-            PaywallView(entitlementService: entitlementService)
-        }
     }
 
     // MARK: - Auth banners
 
     private var signInBanner: some View {
         Button {
-            showSignIn = true
+            path = [.onboarding]
         } label: {
             HStack {
                 Image(systemName: "person.crop.circle.badge.plus")
@@ -109,7 +228,7 @@ struct ChatView: View {
 
     private var subscribeBanner: some View {
         Button {
-            showPaywall = true
+            path = [.paywall]
         } label: {
             HStack {
                 Image(systemName: "sparkles")
@@ -128,7 +247,7 @@ struct ChatView: View {
 
     private var unlockBanner: some View {
         Button {
-            showBiometricLock = true
+            path = [.unlock]
         } label: {
             HStack {
                 Image(systemName: "faceid")
