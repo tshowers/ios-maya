@@ -94,6 +94,16 @@ final class ChatViewModel: ObservableObject {
     /// `resetSession()` does visually on the web. Just clears the on-screen
     /// conversation back to the intro message — re-creating the backend
     /// workspace conversation the way the web does is out of scope here.
+    /// The conversation as plain text, for Download Transcript (a paid
+    /// action - ChatView checks the subscription first).
+    var transcript: String {
+        let stamp = Date().formatted(date: .abbreviated, time: .shortened)
+        let lines = messages.map { message in
+            "\(message.role == .user ? "You" : "Maya"):\n\(message.content.trimmingCharacters(in: .whitespacesAndNewlines))"
+        }
+        return "Maya conversation transcript - \(stamp)\n\n" + lines.joined(separator: "\n\n") + "\n"
+    }
+
     func resetConversation() {
         guard !sending else { return }
         prompt = ""
@@ -131,12 +141,9 @@ final class ChatViewModel: ObservableObject {
             Task { await entitlementService.refreshEntitlement() }
         }
 
-        // Purchase unlocks personalization, not sign-in alone - see
-        // docs/app-store-exclusive-billing-plan.md's "Maya and Ask TODD"
-        // section. Signed in but not entitled: chat keeps working as a
-        // guest (isSignedIn stays false) until there's an entitlement to
-        // hydrate personalization against.
-        guard isEntitled else { return }
+        // Personalization is free once signed in (Ty, 2026-09-28); the
+        // subscription unlocks Maya doing the work (transcripts here;
+        // documents, Moves, surveys, decks and status reports on the web).
 
         guard tenantId != hydratedTenantId else { return }
         hydratedTenantId = tenantId

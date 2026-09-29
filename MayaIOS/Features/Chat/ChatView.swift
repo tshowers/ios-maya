@@ -22,6 +22,8 @@ struct ChatView: View {
     @ObservedObject private var sessionGate: SessionUnlockGate
     @State private var path: [MayaRoute] = []
     @State private var isShowingLogoutConfirmation = false
+    /// Both composers share this, so Done/Send/dragging can hide the keyboard.
+    @FocusState private var isComposerFocused: Bool
 
     init(viewModel: ChatViewModel, authService: AuthService, entitlementService: EntitlementService, awardsService: AwardsService) {
         self.viewModel = viewModel
@@ -39,6 +41,12 @@ struct ChatView: View {
         case checkingEntitlement
         case notEntitled
         case unlocked
+    }
+
+    /// Signed in and past Face ID - enough for personalization, Getting
+    /// Started and awards. The subscription only gates Maya doing the work.
+    private var isSessionReady: Bool {
+        authService.currentUser != nil && sessionGate.isUnlocked
     }
 
     private var authDisplayState: AuthDisplayState {
@@ -66,6 +74,12 @@ struct ChatView: View {
                     }
                 }
                 .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItemGroup(placement: .keyboard) {
+                        Spacer()
+                        Button("Done") { isComposerFocused = false }
+                    }
+                }
                 .navigationDestination(for: MayaRoute.self) { route in
                     destination(route)
                 }
@@ -74,8 +88,8 @@ struct ChatView: View {
         .onChange(of: userMessageCount) { oldValue, newValue in
             if newValue > oldValue { awardsService.recordQuestionAsked() }
         }
-        .onChange(of: authDisplayState == .unlocked) { _, isUnlocked in
-            if isUnlocked { Task { await onUnlocked() } }
+        .onChange(of: isSessionReady) { _, isReady in
+            if isReady { Task { await onUnlocked() } }
         }
         .onChange(of: path.isEmpty) { _, isEmpty in
             // Back on the chat after a profile/checklist visit - the
@@ -83,7 +97,7 @@ struct ChatView: View {
             if isEmpty, authService.currentUser != nil { Task { await checkAwards() } }
         }
         .task {
-            if authDisplayState == .unlocked { await onUnlocked() }
+            if isSessionReady { await onUnlocked() }
         }
         .alert("Log out of Maya?", isPresented: $isShowingLogoutConfirmation) {
             Button("Cancel", role: .cancel) { }
@@ -137,6 +151,15 @@ struct ChatView: View {
             Button { path = [.gettingStarted] } label: { Label("Getting Started", systemImage: "checklist") }
             Button { path = [.profile] } label: { Label("Profile", systemImage: "person.crop.circle") }
             Button { path = [.awards] } label: { Label("Awards", systemImage: "rosette") }
+            // Paid: Maya doing the work. Without the subscription it opens
+            // the paywall instead.
+            if entitlementService.isEntitled {
+                ShareLink(item: viewModel.transcript, preview: SharePreview("Maya conversation transcript")) {
+                    Label("Download Transcript", systemImage: "square.and.arrow.down")
+                }
+            } else {
+                Button { path = [.paywall] } label: { Label("Download Transcript", systemImage: "square.and.arrow.down") }
+            }
             Section {
                 Button(role: .destructive) {
                     isShowingLogoutConfirmation = true
@@ -152,7 +175,7 @@ struct ChatView: View {
         .accessibilityLabel("Account menu")
     }
 
-    /// Signed in, unlocked and subscribed: check awards, and open the
+    /// Signed in and unlocked: check awards, and open the
     /// checklist once per launch while steps remain (unless switched off).
     private func onUnlocked() async {
         await checkAwards()
@@ -232,7 +255,7 @@ struct ChatView: View {
         } label: {
             HStack {
                 Image(systemName: "sparkles")
-                Text("Subscribe to unlock personalization")
+                Text("Subscribe to let Maya do the work")
                     .font(.caption)
                 Spacer()
                 Image(systemName: "chevron.right")
@@ -306,12 +329,14 @@ struct ChatView: View {
                         .allowsHitTesting(false)
                 }
                 TextEditor(text: $viewModel.prompt)
+                    .focused($isComposerFocused)
                     .scrollContentBackground(.hidden)
                     .foregroundStyle(MayaTheme.text)
                     .frame(minHeight: 100, maxHeight: 140)
             }
 
             Button {
+                isComposerFocused = false
                 Task { await viewModel.sendMessage() }
             } label: {
                 HStack(spacing: 10) {
@@ -340,6 +365,7 @@ struct ChatView: View {
 
     private func chipButton(_ label: String) -> some View {
         Button {
+            isComposerFocused = false
             Task { await viewModel.sendMessage(preset: label) }
         } label: {
             HStack(spacing: 8) {
@@ -360,10 +386,14 @@ struct ChatView: View {
 
     // MARK: - Conversation state (`.maya-messages`)
 
+    /// A plain VStack, not LazyVStack: an animated scrollTo into a long,
+    /// not-yet-measured lazy row (a long Maya reply) left the view scrolled
+    /// into blank space with scrolling stuck. A conversation is a few dozen
+    /// messages at most, so laying them all out is cheap.
     private var messageList: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 16) {
                     ForEach(viewModel.messages) { message in
                         MessageBubble(message: message)
                             .id(message.id)
@@ -375,17 +405,31 @@ struct ChatView: View {
                 }
                 .padding()
             }
-            .onChange(of: viewModel.messages.count) { _, _ in scrollToBottom(proxy: proxy) }
-            .onChange(of: viewModel.sending) { _, sending in if sending { scrollToBottom(proxy: proxy) } }
+            .scrollDismissesKeyboard(.interactively)
+            .onChange(of: viewModel.messages.count) { _, _ in scrollToLatest(proxy: proxy) }
+            .onChange(of: viewModel.sending) { _, sending in if sending { scrollToLatest(proxy: proxy) } }
+            .onAppear { scrollToLatest(proxy: proxy, animated: false) }
         }
     }
 
-    private func scrollToBottom(proxy: ScrollViewProxy) {
-        withAnimation {
-            if viewModel.sending {
-                proxy.scrollTo("maya-thinking", anchor: .bottom)
-            } else if let lastId = viewModel.messages.last?.id {
-                proxy.scrollTo(lastId, anchor: .bottom)
+    /// While Maya thinks, show the thinking bubble; once she replies, show
+    /// the TOP of her reply so a long answer is read from its start.
+    private func scrollToLatest(proxy: ScrollViewProxy, animated: Bool = true) {
+        let target: (id: AnyHashable, anchor: UnitPoint)?
+        if viewModel.sending {
+            target = ("maya-thinking", .bottom)
+        } else if let last = viewModel.messages.last {
+            target = (last.id, last.role == .director ? .top : .bottom)
+        } else {
+            target = nil
+        }
+        guard let target else { return }
+        // Next run loop, after the new row is laid out.
+        DispatchQueue.main.async {
+            if animated {
+                withAnimation(.easeOut(duration: 0.25)) { proxy.scrollTo(target.id, anchor: target.anchor) }
+            } else {
+                proxy.scrollTo(target.id, anchor: target.anchor)
             }
         }
     }
@@ -413,6 +457,7 @@ struct ChatView: View {
     private var compactComposer: some View {
         HStack(spacing: 8) {
             TextField("Ask Maya...", text: $viewModel.prompt, axis: .vertical)
+                .focused($isComposerFocused)
                 .lineLimit(1...4)
                 .foregroundStyle(MayaTheme.text)
                 .tint(MayaTheme.accent)
@@ -431,6 +476,7 @@ struct ChatView: View {
             .accessibilityLabel("Reset conversation")
 
             Button {
+                isComposerFocused = false
                 Task { await viewModel.sendMessage() }
             } label: {
                 Group {

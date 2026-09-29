@@ -34,10 +34,14 @@ struct MayaIOSApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootView(authService: authService, entitlementService: entitlementService, awardsService: awardsService, chatViewModel: chatViewModel)
-                .onOpenURL { url in
-                    _ = GoogleSignInHelper.handle(url)
-                }
+            if PaywallScreenshot.current != nil {
+                NavigationStack { PaywallView(entitlementService: entitlementService) }
+            } else {
+                RootView(authService: authService, entitlementService: entitlementService, awardsService: awardsService, chatViewModel: chatViewModel)
+                    .onOpenURL { url in
+                        _ = GoogleSignInHelper.handle(url)
+                    }
+            }
         }
     }
 }

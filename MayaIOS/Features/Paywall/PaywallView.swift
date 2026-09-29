@@ -2,10 +2,11 @@ import SwiftUI
 import StoreKit
 import TODDEntitlementKit
 
-/// Pushed as a page (no popups) when a signed-in user taps the "subscribe
-/// to unlock personalization" banner in `ChatView`; Back returns to chat. Unlike the other apps' PaywallView,
-/// this is dismissible without signing out - Maya's chat keeps working as a
-/// guest either way, purchase only unlocks the personalized layer on top.
+/// Pushed as a page (no popups) from ChatView's "let Maya do the work"
+/// banner or a paid action (Download Transcript); Back returns to chat.
+/// Unlike the other apps' PaywallView it's dismissible without signing
+/// out: advice and personalization are free once signed in (Ty,
+/// 2026-09-28) - the subscription unlocks Maya doing the work.
 struct PaywallView: View {
     @ObservedObject var entitlementService: EntitlementService
     @Environment(\.dismiss) private var dismiss
@@ -16,13 +17,27 @@ struct PaywallView: View {
 
                 Text("Subscribe to Maya")
                     .font(.title2.bold())
-                Text("An active subscription unlocks personalization - Maya sees your business context and remembers your conversations.")
+                Text("Advice and personalization are free. Subscribe to let Maya do the work: download your conversation transcripts here, and on maya.taliferro.tech create documents, Moves and surveys, decks and status reports.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.horizontal, 24)
 
-                if entitlementService.products.isEmpty {
+                if let preview = PaywallScreenshot.current {
+                    Button {} label: {
+                        HStack {
+                            Text(preview.name)
+                            Spacer()
+                            Text(preview.price)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                    .padding(.horizontal, 32)
+                    .padding(.top, 16)
+                } else if entitlementService.products.isEmpty {
                     ProgressView()
                         .padding(.top, 24)
                 } else {

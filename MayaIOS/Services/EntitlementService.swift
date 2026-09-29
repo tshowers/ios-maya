@@ -62,6 +62,7 @@ final class EntitlementService: ObservableObject {
     }
 
     func loadProducts() async {
+        if PaywallScreenshot.current != nil { return }
         guard !configuredProductIds.isEmpty else {
             errorMessage = "Maya's App Store subscription isn't configured yet."
             return
