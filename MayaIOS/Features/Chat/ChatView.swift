@@ -511,6 +511,9 @@ struct ChatView: View {
 /// label over the content, right-aligned and accent-tinted for the user.
 private struct MessageBubble: View {
     let message: ChatMessage
+    /// iPad (regular width) gets wider bubbles - the iPhone's 300pt column
+    /// left most of an iPad screen empty.
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
 
     var body: some View {
         VStack(alignment: message.role == .user ? .trailing : .leading, spacing: 6) {
@@ -531,27 +534,33 @@ private struct MessageBubble: View {
             RoundedRectangle(cornerRadius: 18)
                 .stroke(message.role == .user ? MayaTheme.userBubbleBorder : MayaTheme.border, lineWidth: 1)
         )
-        .frame(maxWidth: 300, alignment: message.role == .user ? .trailing : .leading)
+        .frame(maxWidth: horizontalSizeClass == .regular ? 640 : 300, alignment: message.role == .user ? .trailing : .leading)
         .frame(maxWidth: .infinity, alignment: message.role == .user ? .trailing : .leading)
     }
 
-    /// Maya's replies are conversational text, not Markdown - a plain
-    /// `Text(content)` never made a URL she mentions tappable at all.
-    /// `NSDataDetector` finds URLs anywhere in the string and marks them
-    /// as `.link` runs, so tapping one goes through the system's normal
-    /// URL-opening path - which is exactly what makes Universal Links
-    /// work later (open the native app if it's installed and associated
-    /// with that domain, Safari otherwise) with no extra code here.
+    /// Maya's replies use light Markdown - **bold**, *italic*, `code` - which
+    /// a plain `Text` showed as literal asterisks. Inline Markdown is
+    /// rendered (line breaks and lists kept as written), then
+    /// `NSDataDetector` marks any URL as a `.link` run so tapping it goes
+    /// through the system's normal URL-opening path (Universal Links open
+    /// the native app when installed, Safari otherwise).
     private static func linkified(_ content: String) -> AttributedString {
-        let mutable = NSMutableAttributedString(string: content)
+        var attributed = (try? AttributedString(
+            markdown: content,
+            options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(content)
+
+        let plain = String(attributed.characters)
         if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
-            let matches = detector.matches(in: content, range: NSRange(location: 0, length: (content as NSString).length))
+            let matches = detector.matches(in: plain, range: NSRange(location: 0, length: (plain as NSString).length))
             for match in matches {
-                if let url = match.url {
-                    mutable.addAttribute(.link, value: url, range: match.range)
-                }
+                guard let url = match.url,
+                      let stringRange = Range(match.range, in: plain),
+                      let lower = AttributedString.Index(stringRange.lowerBound, within: attributed),
+                      let upper = AttributedString.Index(stringRange.upperBound, within: attributed) else { continue }
+                attributed[lower..<upper].link = url
             }
         }
-        return (try? AttributedString(mutable, including: \.foundation)) ?? AttributedString(content)
+        return attributed
     }
 }

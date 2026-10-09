@@ -52,7 +52,9 @@ struct MayaOnboardingView: View {
         }
     }
 
-    private static let newUserOrder: [Step] = [.welcome, .firstName, .lastName, .role, .company, .helpWith, .signIn]
+    /// No name questions: Sign in with Apple / Google provides the name
+    /// (App Review guideline 4 - never ask for what Apple already gave us).
+    private static let newUserOrder: [Step] = [.welcome, .role, .company, .helpWith, .signIn]
 
     private var isFinishingProfile: Bool { authService.currentUser != nil }
 
@@ -300,7 +302,7 @@ struct MayaOnboardingView: View {
         switch step {
         case .welcome:
             VStack(spacing: 8) {
-                secondaryButton("I'm new to TODD") { step = .firstName }
+                secondaryButton("I'm new to TODD") { step = .role }
                     .accessibilityIdentifier("maya-onboarding-new")
                 Text("Maya keeps working without an account - this just makes her advice yours.")
                     .font(.caption)
@@ -386,8 +388,9 @@ struct MayaOnboardingView: View {
         }
         greetingName = profile.firstName
         var missing: [Step] = []
-        if profile.firstName.nilIfBlank == nil { missing.append(.firstName) }
-        if profile.lastName.nilIfBlank == nil { missing.append(.lastName) }
+        // Never the name: Sign in with Apple / Google already provided it
+        // (synced by AuthService.syncSignInName) - App Review rejects asking
+        // for a name after Sign in with Apple (guideline 4).
         if profile.profession.nilIfBlank == nil { missing.append(.role) }
         if profile.companyName.nilIfBlank == nil { missing.append(.company) }
         if profile.jobDescriptionForTODD.nilIfBlank == nil { missing.append(.helpWith) }

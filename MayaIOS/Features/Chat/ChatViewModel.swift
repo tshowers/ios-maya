@@ -44,6 +44,11 @@ final class ChatViewModel: ObservableObject {
         self.workspaceContextService = workspaceContextService
         self.conversationStore = conversationStore
         self.messages = [Self.buildPublicIntroMessage()]
+        if let demo = ScreenshotDemo.conversation {
+            self.messages = [Self.buildPublicIntroMessage()] + demo.map { message in
+                ChatMessage(role: message.role, content: message.role == .director ? Self.normalizeDirectorReply(message.content) : message.content)
+            }
+        }
 
         Publishers.CombineLatest4(
             authService.$currentUser,

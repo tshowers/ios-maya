@@ -80,11 +80,30 @@ final class AuthService: ObservableObject {
         }
         tenantId = try JSONDecoder().decode(BootstrapResponse.self, from: data).tenantId
         await submitOnboardingProfileIfNeeded()
+        // Fill the profile's name from Sign in with Apple / Google instead of
+        // ever asking for it (App Review guideline 4).
+        await syncSignInName()
     }
 
     /// Where the wizard keeps name/role/company/goals until sign-in.
     static let profileStore = OnboardingProfileStore(storageKey: "maya.onboardingProfile", source: "maya-ios")
 
+
+    /// The name Apple or Google already gave us -> the TODD profile (blank
+    /// fields only), so no screen asks for it (TODDProfileKit.SignInNameSync).
+    func syncSignInName() async {
+        guard let user = currentUser else { return }
+        await SignInNameSync.submitIfNeeded(
+            uid: user.uid,
+            displayName: user.displayName,
+            source: "maya-ios",
+            baseURL: AppConfig.fromBundle().apiBaseURL,
+            idToken: { [weak self] in
+                guard let self else { throw AuthServiceError.notSignedIn }
+                return try await self.freshIdToken()
+            }
+        )
+    }
     /// Saves the wizard's answers to the TODD profile (blank fields only,
     /// best-effort; retried next launch if it fails).
     func submitOnboardingProfileIfNeeded() async {

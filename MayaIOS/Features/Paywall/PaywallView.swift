@@ -28,7 +28,7 @@ struct PaywallView: View {
                         HStack {
                             Text(preview.name)
                             Spacer()
-                            Text(preview.price)
+                            Text("\(preview.price) / month")
                                 .foregroundStyle(.secondary)
                         }
                         .frame(maxWidth: .infinity)
@@ -37,6 +37,9 @@ struct PaywallView: View {
                     .controlSize(.large)
                     .padding(.horizontal, 32)
                     .padding(.top, 16)
+                    Text("Renews monthly until canceled.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 } else if entitlementService.products.isEmpty {
                     ProgressView()
                         .padding(.top, 24)
@@ -47,12 +50,17 @@ struct PaywallView: View {
                                 Task {
                                     await entitlementService.purchase(product)
                                     if entitlementService.isEntitled { dismiss() }
+                                    if let renewal = product.renewalText {
+                                        Text("\(renewal) until canceled.")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
                                 }
                             } label: {
                                 HStack {
                                     Text(product.displayName)
                                     Spacer()
-                                    Text(product.displayPrice)
+                                    Text(product.displayPriceWithPeriod)
                                         .foregroundStyle(.secondary)
                                 }
                                 .frame(maxWidth: .infinity)
