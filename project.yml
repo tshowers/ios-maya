@@ -34,7 +34,7 @@ targets:
         # (CURRENT_PROJECT_VERSION). Bump the build number for every upload
         # to App Store Connect - it must be higher than the last one.
         MARKETING_VERSION: "1.1"
-        CURRENT_PROJECT_VERSION: "5"
+        CURRENT_PROJECT_VERSION: "6"
         MAYA_API_BASE_URL: https://api.taliferro.tech/api
         # The static bearer key /marketing-director/advice checks
         # server-side (process.env.TALIFERRO_TECH in openaiRoutes.js) -
