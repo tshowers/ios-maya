@@ -6,6 +6,7 @@ import TODDAwardsKit
 
 @main
 struct MayaIOSApp: App {
+    @UIApplicationDelegateAdaptor(MayaAppDelegate.self) private var appDelegate
     @StateObject private var authService = AuthService()
     @StateObject private var entitlementService: EntitlementService
     @StateObject private var awardsService: AwardsService
@@ -28,11 +29,10 @@ struct MayaIOSApp: App {
         let socialAPI = SocialAPIClient(config: config, authService: authService)
         let socialStore = SocialStore(api: socialAPI)
         _socialStore = StateObject(wrappedValue: socialStore)
-        // Approve / Hold from a review reminder (SocialReviewReminders).
-        SocialReviewReminders.registerCategory()
-        SocialNotificationDelegate.shared.api = socialAPI
-        SocialNotificationDelegate.shared.onChange = { Task { await socialStore.loadPosts(force: true) } }
-        UNUserNotificationCenter.current().delegate = SocialNotificationDelegate.shared
+        // Maya's notes (push): Approve / Hold right on the notification.
+        MayaPushService.shared.configure(api: socialAPI)
+        MayaNotificationDelegate.shared.onChange = { Task { await socialStore.loadPosts(force: true) } }
+        UNUserNotificationCenter.current().delegate = MayaNotificationDelegate.shared
         self.chatViewModel = ChatViewModel(
             apiClient: MarketingDirectorAPIClient(config: config),
             authService: authService,

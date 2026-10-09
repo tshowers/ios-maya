@@ -30,11 +30,13 @@ enum SocialAPIError: LocalizedError {
 /// Firebase ID token, like MayaAppStoreClient.
 final class SocialAPIClient {
     private let baseURL: URL
+    private let apiRoot: URL
     private let authService: AuthService
     private let decoder = JSONDecoder()
     private let encoder = JSONEncoder()
 
     init(config: AppConfig, authService: AuthService) {
+        self.apiRoot = config.apiBaseURL
         self.baseURL = config.apiBaseURL.appending(path: "maya-social")
         self.authService = authService
     }
@@ -49,6 +51,11 @@ final class SocialAPIClient {
 
     func setAutoApproveHours(_ hours: Int) async throws -> SocialOverview {
         try await request("PUT", "settings", body: ["autoApproveHours": hours])
+    }
+
+    /// Notes from Maya (gaps 2m): push and email switches.
+    func setNotes(push: Bool, email: Bool) async throws -> SocialOverview {
+        try await request("PUT", "settings", body: ["notifyPush": push, "notifyEmail": email])
     }
 
     func saveProfile(_ profile: SocialProfile) async throws -> SocialOverview {
@@ -95,6 +102,45 @@ final class SocialAPIClient {
         try await request("POST", "posts/\(id)/hold", body: [String: String]())
     }
 
+    func editTitle(_ id: String, title: String) async throws -> SocialPost {
+        try await request("PUT", "posts/\(id)/title", body: ["title": title])
+    }
+
+    func drop(_ id: String) async throws {
+        let _: DropResult = try await request("POST", "posts/\(id)/drop", body: [String: String]())
+    }
+
+    func unpin(_ id: String) async throws -> SocialPost {
+        let result: UnpinResult = try await request("POST", "posts/\(id)/unpin", body: [String: String]())
+        return result.post
+    }
+
+    /// Retry or skip one channel of a post that went out (gaps 2n).
+    func channelAction(_ id: String, channel: String, action: String) async throws -> SocialPost {
+        try await request("POST", "posts/\(id)/channels/\(channel)/\(action)", body: [String: String]())
+    }
+
+    /// "use-edit" or "keep" on an Off-strategy post (gaps 2h).
+    func offStrategy(_ id: String, action: String) async throws -> SocialPost {
+        try await request("POST", "posts/\(id)/off-strategy/\(action)", body: [String: String]())
+    }
+
+    /// "remake" or "maya" on a post's image (gaps 2l).
+    func imageAction(_ id: String, action: String) async throws -> SocialPost {
+        try await request("POST", "posts/\(id)/image/\(action)", body: [String: String]())
+    }
+
+    // MARK: Push (todd-backend pushRoutes.js)
+
+    func registerPushDevice(token: String, environment: String, appVersion: String) async throws {
+        let body = try encoder.encode(["token": token, "app": "maya", "environment": environment, "appVersion": appVersion])
+        _ = try await raw("POST", apiRoot.appending(path: "mobile/push/devices"), body: body)
+    }
+
+    func unregisterPushDevice(token: String) async throws {
+        _ = try await raw("DELETE", apiRoot.appending(path: "mobile/push/devices/\(token)"), body: nil)
+    }
+
     // MARK: -
 
     private func request<T: Decodable>(_ method: String, _ path: String, query: [URLQueryItem] = []) async throws -> T {
@@ -106,9 +152,14 @@ final class SocialAPIClient {
     }
 
     private func send<T: Decodable>(_ method: String, _ path: String, query: [URLQueryItem], body: Data?) async throws -> T {
-        let idToken = try await authService.freshIdToken()
         var url = baseURL.appending(path: path)
         if !query.isEmpty { url.append(queryItems: query) }
+        let data = try await raw(method, url, body: body)
+        return try decoder.decode(SocialEnvelope<T>.self, from: data).data
+    }
+
+    private func raw(_ method: String, _ url: URL, body: Data?) async throws -> Data {
+        let idToken = try await authService.freshIdToken()
 
         var urlRequest = URLRequest(url: url)
         urlRequest.httpMethod = method
@@ -122,6 +173,6 @@ final class SocialAPIClient {
         guard (200...299).contains(http.statusCode) else {
             throw SocialAPIError.server(status: http.statusCode, body: try? decoder.decode(SocialErrorBody.self, from: data))
         }
-        return try decoder.decode(SocialEnvelope<T>.self, from: data).data
+        return data
     }
 }

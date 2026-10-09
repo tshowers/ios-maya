@@ -4,13 +4,11 @@ import SwiftUI
 
 struct SocialProfileView: View {
     @ObservedObject var store: SocialStore
-    @Environment(\.openURL) private var openURL
     @State private var profile = SocialProfile(companyName: "", companyGoal: "", timezone: nil, products: [], audience: "", location: "", website: "", tones: [])
     @State private var isSaving = false
     @State private var saved = false
 
     private let tones = ["Plain", "Confident", "Playful"]
-    private let channelOrder = ["linkedin", "threads", "facebook", "instagram", "google_business_profile"]
 
     private var valid: Bool {
         !profile.companyName.trimmingCharacters(in: .whitespaces).isEmpty
@@ -77,20 +75,22 @@ struct SocialProfileView: View {
             }
 
             Section {
-                ForEach(channelOrder.filter { store.channelNames[$0] != nil }, id: \.self) { key in
-                    HStack {
-                        Text(store.channelNames[key] ?? key)
-                        Spacer()
-                        if (store.overview?.connectedChannels ?? []).contains(key) {
-                            Label("Connected", systemImage: "checkmark").foregroundStyle(SocialTheme.tint("green").fg).font(.subheadline.bold())
-                        } else {
-                            Button("Connect") { openURL(URL(string: "https://social.taliferro.tech/profile#channels")!) }
-                        }
+                Toggle("Push to the Maya app", isOn: Binding(get: { store.overview?.notifyPush ?? true }, set: { on in
+                    Task {
+                        do { store.apply(try await store.api.setNotes(push: on, email: store.overview?.notifyEmail ?? true)) } catch { store.errorMessage = error.localizedDescription }
+                        if on { await MayaPushService.shared.requestPermission() }
                     }
-                }
-            } header: { Text("Channels") } footer: { Text("Maya posts only to channels you connect. Connecting opens Maya Social on the web.") }
+                }))
+                Toggle("Email", isOn: Binding(get: { store.overview?.notifyEmail ?? true }, set: { on in
+                    Task { do { store.apply(try await store.api.setNotes(push: store.overview?.notifyPush ?? true, email: on)) } catch { store.errorMessage = error.localizedDescription } }
+                }))
+            } header: { Text("Notes from Maya") } footer: { Text("One note per review batch, at 9:00 AM, plus one if a post fails or a pinned post is about to expire. Approve or hold right from the notification.") }
+
+            Section {
+                Text("Channels are on Strategy.").foregroundStyle(SocialTheme.muted)
+            }
         }
-        .navigationTitle("Social profile")
+        .navigationTitle("Social settings")
         .onAppear { if let current = store.overview?.profile { profile = current } }
         .refreshable { await store.load() }
     }

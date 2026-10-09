@@ -41,6 +41,19 @@ final class SocialStore: ObservableObject {
         return strategy.channels.filter { !connected.contains($0.key) }
     }
 
+    /// Gaps 2c: nothing connected, so nothing posts or auto-approves.
+    var publishingPaused: Bool { overview?.publishingPaused ?? false }
+    /// New post needs an approved strategy and a connected channel (2a).
+    var canPost: Bool { strategy != nil && !publishingPaused }
+
+    func channelState(_ key: String) -> ChannelState? {
+        overview?.channelStatus?.first { $0.key == key }
+    }
+
+    func isConnected(_ key: String) -> Bool {
+        (overview?.connectedChannels ?? []).contains(key)
+    }
+
     func pillar(_ key: String) -> Pillar {
         strategy?.pillars.first { $0.key == key }
             ?? Pillar(key: key, name: key, share: 0, description: "", maxOneIn: 0, tint: "blue")
@@ -92,7 +105,6 @@ final class SocialStore: ObservableObject {
         do {
             posts = try await api.posts(from: from, to: SocialDates.add(today, 60))
             postsLoadedFor = from
-            SocialReviewReminders.schedule(for: posts, timeZone: timeZone)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -105,6 +117,24 @@ final class SocialStore: ObservableObject {
     // MARK: Post actions
 
     func approve(_ post: SocialPost) async { await act(post) { try await self.api.approve(post.id) } }
+    func unpin(_ post: SocialPost) async { await act(post) { try await self.api.unpin(post.id) } }
+    func retry(_ post: SocialPost, channel: String) async { await act(post) { try await self.api.channelAction(post.id, channel: channel, action: "retry") } }
+    func skip(_ post: SocialPost, channel: String) async { await act(post) { try await self.api.channelAction(post.id, channel: channel, action: "skip") } }
+    func offStrategy(_ post: SocialPost, action: String) async { await act(post) { try await self.api.offStrategy(post.id, action: action) } }
+    func remakeImage(_ post: SocialPost) async { await act(post) { try await self.api.imageAction(post.id, action: "remake") } }
+    func editTitle(_ post: SocialPost, title: String) async { await act(post) { try await self.api.editTitle(post.id, title: title) } }
+
+    /// Drop (held twice): the queue moves up a day, so reload.
+    func drop(_ post: SocialPost) async {
+        busyPostId = post.id
+        defer { busyPostId = nil }
+        do {
+            try await api.drop(post.id)
+            await loadPosts(force: true)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
     func undoApprove(_ post: SocialPost) async { await act(post) { try await self.api.undoApprove(post.id) } }
     func hold(_ post: SocialPost) async { await act(post) { try await self.api.hold(post.id) } }
 
@@ -158,7 +188,8 @@ enum SocialTheme {
         case .posted, .approved: return tint("green")
         case .needs_review: return tint("blue")
         case .on_hold: return tint("pink")
-        case .expired: return tint("yellow")
+        case .expired, .paused: return tint("yellow")
+        case .dropped: return tint("pink")
         case .drafted: return (surface2, text)
         case .planned: return (bg, muted)
         }

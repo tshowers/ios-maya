@@ -58,6 +58,14 @@ struct SocialStrategy: Codable {
     let reason: String?
 }
 
+/// Where a channel stands (gaps 2b).
+struct ChannelState: Decodable, Hashable {
+    let key: String
+    let name: String
+    let status: String // connected | needs_reconnect | not_connected
+    let account: String?
+}
+
 struct SocialOverview: Decodable {
     let entitled: Bool
     let onboardedAt: String?
@@ -71,11 +79,15 @@ struct SocialOverview: Decodable {
     let plannedThrough: String?
     let nextPlanDate: String?
     let connectedChannels: [String]?
+    let channelStatus: [ChannelState]?
+    let publishingPaused: Bool?
+    let notifyPush: Bool?
+    let notifyEmail: Bool?
     let channels: [String: String]?
 }
 
 enum PostStatus: String, Codable {
-    case planned, drafted, needs_review, approved, on_hold, posted, expired
+    case planned, drafted, needs_review, approved, on_hold, posted, expired, dropped, paused
 
     var label: String {
         switch self {
@@ -86,10 +98,34 @@ enum PostStatus: String, Codable {
         case .on_hold: return "On hold"
         case .posted: return "Posted"
         case .expired: return "Expired"
+        case .dropped: return "Dropped"
+        case .paused: return "Paused"
         }
     }
 
-    var isActive: Bool { ![.posted, .expired].contains(self) }
+    var isActive: Bool { [.planned, .drafted, .needs_review, .approved, .on_hold].contains(self) }
+}
+
+/// A post's image (gaps 2l).
+struct PostImage: Codable, Hashable {
+    let source: String
+    let status: String // pending | making | ready | failed
+    let url: String?
+    let brief: String?
+}
+
+/// One channel of a post that went out (gaps 2n).
+struct ChannelResult: Codable, Hashable {
+    let channel: String
+    let status: String // queued | retrying | posted | failed | skipped
+    let url: String?
+    let reason: String?
+    let error: String?
+}
+
+struct OffStrategyEdit: Codable, Hashable {
+    let title: String
+    let body: String
 }
 
 struct SocialPost: Codable, Identifiable, Hashable {
@@ -109,6 +145,21 @@ struct SocialPost: Codable, Identifiable, Hashable {
     let rewriteCount: Int?
     let holdCount: Int?
     let movedBackDays: Int
+    let image: PostImage?
+    let channelResults: [ChannelResult]?
+    let offStrategy: Bool?
+    let offStrategyKept: Bool?
+    let offStrategyNote: String?
+    let offStrategyEdit: OffStrategyEdit?
+
+    var isHeldTwice: Bool { status == .on_hold && (holdCount ?? 0) >= 2 }
+    var failedChannels: [ChannelResult] { (channelResults ?? []).filter { $0.status == "failed" } }
+}
+
+struct DropResult: Decodable {}
+
+struct UnpinResult: Decodable {
+    let post: SocialPost
 }
 
 struct PostSlot: Codable, Hashable {

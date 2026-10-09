@@ -47,7 +47,7 @@ struct SocialWelcomeView: View {
                         defer { isBusy = false }
                         do {
                             store.apply(try await store.api.onboard(autoApproveHours: hours))
-                            await SocialReviewReminders.requestPermission()
+                            await MayaPushService.shared.requestPermission()
                         } catch {
                             store.errorMessage = error.localizedDescription
                         }
@@ -95,26 +95,12 @@ struct SocialSetupView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 if isBuilding {
-                    MayaAvatar(size: 64)
-                    Text("Building your strategy.").font(.system(size: 30, weight: .bold))
-                    HStack(spacing: 10) { ProgressView(); Text("Maya is building your strategy from your profile. This takes about a minute.").foregroundStyle(SocialTheme.muted) }
+                    building
                 } else if let pending = store.overview?.pendingStrategy {
-                    SocialNotice(tint: "blue", text: "Review your strategy. Nothing goes on the calendar until you approve it.") { EmptyView() }
+                    SocialNotice(tint: "blue", text: "Here’s my first strategy for you. Nothing is scheduled until you approve it. Then I’ll plan three weeks and draft the first posts.") { EmptyView() }
                     SocialStrategyBody(store: store, strategy: pending)
-                    Button {
-                        Task {
-                            isSaving = true
-                            defer { isSaving = false }
-                            do {
-                                store.apply(try await store.api.approveStrategy())
-                                await store.loadPosts(force: true)
-                            } catch { store.errorMessage = error.localizedDescription }
-                        }
-                    } label: {
-                        HStack { if isSaving { ProgressView().tint(.white); Text("Planning your calendar…") } else { Text("Approve and plan my calendar") } }
-                    }
-                    .buttonStyle(SocialPillButtonStyle(kind: .primary, height: 54))
-                    .disabled(isSaving)
+                    Button("Regenerate") { generate() }
+                        .buttonStyle(SocialPillButtonStyle(height: 46))
                 } else if missing.isEmpty {
                     noStrategy
                 } else {
@@ -123,10 +109,66 @@ struct SocialSetupView: View {
             }
             .padding(20)
         }
+        // 3h: once built, Approve stays pinned to the bottom.
+        .safeAreaInset(edge: .bottom) {
+            if !isBuilding, store.overview?.pendingStrategy != nil {
+                Button {
+                    Task {
+                        isSaving = true
+                        defer { isSaving = false }
+                        do {
+                            store.apply(try await store.api.approveStrategy())
+                            await store.loadPosts(force: true)
+                            await MayaPushService.shared.requestPermission()
+                        } catch { store.errorMessage = error.localizedDescription }
+                    }
+                } label: {
+                    HStack { if isSaving { ProgressView().tint(.white); Text("Planning your calendar…") } else { Text("Approve and plan my calendar") } }
+                }
+                .buttonStyle(SocialPillButtonStyle(kind: .primary, height: 54))
+                .disabled(isSaving)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(SocialTheme.bg)
+            }
+        }
         .onAppear {
             companyName = store.overview?.profile?.companyName ?? ""
             companyGoal = store.overview?.profile?.companyGoal ?? ""
         }
+    }
+
+    /// 3h: what Maya is doing while she builds.
+    private var building: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            MayaAvatar(size: 76)
+                .padding(5)
+                .background(SocialTheme.tint("blue").bg, in: Circle())
+            Text("Building your strategy…").font(.system(size: 30, weight: .bold)).kerning(-0.8)
+            VStack(spacing: 8) {
+                buildStep("Read your profile", state: .done)
+                buildStep("Picking content pillars", state: .doing)
+                buildStep("Setting channel cadence", state: .doing)
+                buildStep("Planning three weeks, once you approve", state: .next)
+            }
+        }
+    }
+
+    private enum StepState { case done, doing, next }
+
+    private func buildStep(_ text: String, state: StepState) -> some View {
+        HStack(spacing: 12) {
+            switch state {
+            case .done: Image(systemName: "checkmark").font(.system(size: 13, weight: .heavy)).foregroundStyle(SocialTheme.tint("green").fg).frame(width: 22)
+            case .doing: ProgressView().frame(width: 22)
+            case .next: Circle().strokeBorder(SocialTheme.surface2, lineWidth: 2).frame(width: 22, height: 22)
+            }
+            Text(text).font(.system(size: 16, weight: .bold)).foregroundStyle(state == .next ? SocialTheme.muted : SocialTheme.text)
+            Spacer()
+        }
+        .padding(.horizontal, 18)
+        .frame(height: 50)
+        .background(state == .next ? Color.clear : SocialTheme.surface, in: Capsule())
     }
 
     private var noStrategy: some View {
@@ -254,35 +296,21 @@ struct SocialStrategyBody: View {
             LazyVGrid(columns: [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)], spacing: 12) {
                 ForEach(strategy.pillars, id: \.key) { pillar in
                     let colors = SocialTheme.tint(pillar.tint)
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("\(pillar.share)%").font(.system(size: 30, weight: .bold))
-                        Text(pillar.name).font(.system(size: 17, weight: .bold))
-                        Text(pillar.description + (pillar.maxOneIn > 1 ? " Never more than 1 in \(pillar.maxOneIn) posts." : "")).font(.system(size: 13))
-                        Spacer(minLength: 0)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("\(pillar.share)%").font(.system(size: 26, weight: .bold))
+                        Text(pillar.name).font(.system(size: 15, weight: .bold))
                     }
-                    .frame(maxWidth: .infinity, minHeight: 150, alignment: .topLeading)
+                    .frame(maxWidth: .infinity, minHeight: 70, alignment: .topLeading)
                     .padding(16)
                     .background(colors.bg, in: RoundedRectangle(cornerRadius: 24))
                     .foregroundStyle(colors.fg)
                 }
             }
 
-            Text("Channels").font(.system(size: 20, weight: .bold))
+            SocialKicker(text: "Channels")
             VStack(spacing: 8) {
                 ForEach(strategy.channels, id: \.key) { channel in
-                    HStack(alignment: .top) {
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text(channel.name).font(.system(size: 16, weight: .bold))
-                            Text(channel.role).font(.system(size: 13)).foregroundStyle(SocialTheme.muted)
-                            if !(store.overview?.connectedChannels ?? []).contains(channel.key) {
-                                Text("Not connected").font(.system(size: 13, weight: .bold)).foregroundStyle(SocialTheme.blueInk)
-                            }
-                        }
-                        Spacer()
-                        Text("\(channel.perWeek) / week").font(.system(size: 14, weight: .bold))
-                    }
-                    .padding(16)
-                    .background(SocialTheme.surface, in: RoundedRectangle(cornerRadius: 22))
+                    SocialChannelRow(store: store, channel: channel)
                 }
             }
 
@@ -351,5 +379,40 @@ struct SocialStrategyView: View {
         Task {
             do { store.apply(try await call()) } catch { store.errorMessage = error.localizedDescription }
         }
+    }
+}
+
+
+/// One strategy channel with where it stands (gaps 2b, 3c). Connecting
+/// opens Maya Social on the web, where the provider's sign-in runs.
+struct SocialChannelRow: View {
+    @ObservedObject var store: SocialStore
+    let channel: SocialChannel
+    @Environment(\.openURL) private var openURL
+
+    var body: some View {
+        let state = store.channelState(channel.key)?.status ?? (store.isConnected(channel.key) ? "connected" : "not_connected")
+        let signedOut = state == "needs_reconnect"
+        HStack(spacing: 10) {
+            Text(channel.name).font(.system(size: 16, weight: .bold))
+            Spacer()
+            Text("\(channel.perWeek)/wk").font(.system(size: 14)).foregroundStyle(signedOut ? SocialTheme.tint("yellow").fg : SocialTheme.muted)
+            if state == "connected" {
+                SocialChip(text: "Connected", colors: SocialTheme.tint("green"))
+            } else {
+                Button(signedOut ? "Reconnect" : "Connect") {
+                    openURL(URL(string: "https://social.taliferro.tech/strategy#channels-title")!)
+                }
+                .font(.system(size: 15, weight: .bold))
+                .padding(.horizontal, 16)
+                .frame(height: 40)
+                .background(SocialTheme.blue, in: Capsule())
+                .foregroundStyle(.white)
+            }
+        }
+        .padding(.leading, 16)
+        .padding(.trailing, 6)
+        .frame(minHeight: 52)
+        .background(signedOut ? SocialTheme.tint("yellow").bg : SocialTheme.surface, in: Capsule())
     }
 }

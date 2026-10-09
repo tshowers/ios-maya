@@ -92,6 +92,9 @@ targets:
       properties:
         com.apple.developer.applesignin:
           - Default
+        # Maya's notes (Maya Social, design_handoff_maya_social_gaps 3i).
+        # The App ID needs Push Notifications enabled in the developer portal.
+        aps-environment: development
     dependencies:
       - package: FirebaseiOS
         product: FirebaseAuth
