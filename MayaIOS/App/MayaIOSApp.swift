@@ -1,5 +1,6 @@
 import SwiftUI
 import FirebaseCore
+import UserNotifications
 import TODDAuthKit
 import TODDAwardsKit
 
@@ -8,6 +9,7 @@ struct MayaIOSApp: App {
     @StateObject private var authService = AuthService()
     @StateObject private var entitlementService: EntitlementService
     @StateObject private var awardsService: AwardsService
+    @StateObject private var socialStore: SocialStore
     private let chatViewModel: ChatViewModel
 
     init() {
@@ -23,6 +25,14 @@ struct MayaIOSApp: App {
             config: config
         )
         _entitlementService = StateObject(wrappedValue: entitlementService)
+        let socialAPI = SocialAPIClient(config: config, authService: authService)
+        let socialStore = SocialStore(api: socialAPI)
+        _socialStore = StateObject(wrappedValue: socialStore)
+        // Approve / Hold from a review reminder (SocialReviewReminders).
+        SocialReviewReminders.registerCategory()
+        SocialNotificationDelegate.shared.api = socialAPI
+        SocialNotificationDelegate.shared.onChange = { Task { await socialStore.loadPosts(force: true) } }
+        UNUserNotificationCenter.current().delegate = SocialNotificationDelegate.shared
         self.chatViewModel = ChatViewModel(
             apiClient: MarketingDirectorAPIClient(config: config),
             authService: authService,
@@ -37,7 +47,7 @@ struct MayaIOSApp: App {
             if PaywallScreenshot.current != nil {
                 NavigationStack { PaywallView(entitlementService: entitlementService) }
             } else {
-                RootView(authService: authService, entitlementService: entitlementService, awardsService: awardsService, chatViewModel: chatViewModel)
+                RootView(authService: authService, entitlementService: entitlementService, awardsService: awardsService, socialStore: socialStore, chatViewModel: chatViewModel)
                     .onOpenURL { url in
                         _ = GoogleSignInHelper.handle(url)
                     }
